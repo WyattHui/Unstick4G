@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Build debug APK and run unit tests
+        run: ./gradlew assembleDebug testDebugUnitTest
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: unstick4g-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
