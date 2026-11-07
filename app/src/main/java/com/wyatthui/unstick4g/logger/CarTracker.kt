@@ -17,13 +17,16 @@ class CarTracker(
     private val context: Context,
     private val settings: Settings,
     private val onChange: (connected: Boolean) -> Unit,
+    private val onBluetoothChange: (connected: Boolean) -> Unit,
 ) {
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             val device = IntentCompat.getParcelableExtra(intent, BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
                 ?: return
             if (device.address == settings.carAddress) {
-                onChange(intent.action == BluetoothDevice.ACTION_ACL_CONNECTED)
+                val connected = intent.action == BluetoothDevice.ACTION_ACL_CONNECTED
+                onChange(connected)
+                onBluetoothChange(connected)
             }
         }
     }

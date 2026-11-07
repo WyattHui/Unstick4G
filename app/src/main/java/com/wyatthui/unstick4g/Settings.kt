@@ -20,8 +20,13 @@ class Settings(context: Context) {
         get() = prefs.getString(KEY_FIX_METHOD, null)?.let(FixMethodSetting::valueOf) ?: FixMethodSetting.AUTO
         set(value) = prefs.edit { putString(KEY_FIX_METHOD, value.name) }
 
+    var autoFix: Boolean
+        get() = prefs.getBoolean(KEY_AUTO_FIX, true)
+        set(value) = prefs.edit { putBoolean(KEY_AUTO_FIX, value) }
+
     private companion object {
         const val KEY_CAR_ADDRESS = "car_address"
         const val KEY_FIX_METHOD = "fix_method"
+        const val KEY_AUTO_FIX = "auto_fix"
     }
 }

@@ -19,6 +19,7 @@ Unstick4G does that step for me. It also records data, so a later version can do
 ## What it does
 
 - **Fix:** a Quick Settings tile and an in-app button. The Fix sets the preferred network mode to 2G only for a few seconds, then restores the exact mode it found. If the phone doesn't allow that, it turns flight mode on and off instead. Then it watches the network for up to 30 seconds and tells you "Back on 4G ✓" or "Still on 2G — probably no usable 4G here."
+- **Auto-fix when you park:** a minute after the phone disconnects from the car's Bluetooth, if it is on 2G, the Fix runs by itself. Reconnecting within that minute cancels it, so a short Bluetooth drop mid-drive does nothing. In my logs, the long stuck spells started at the end of a drive. You only get a notification if it didn't work. A switch in Settings turns it off.
 - **Safety:** the original mode is saved before the switch, and restored on the next start if the app dies halfway. The Fix does nothing during a call, or when the network mode isn't the normal auto mode.
 - **Logger:** a foreground service, started at boot, records every network-type change. It never changes anything.
 - **Location only while driving:** while the phone is connected to the car's Bluetooth (you pick the car once in Settings) *and* location is on, it records a GPS sample every 30 seconds and on every network change, with the LTE cells the phone can see.
@@ -57,6 +58,7 @@ Shizuku stops when the phone restarts, and it can occasionally stop on its own. 
 | Location, "Allow all the time" (`ACCESS_FINE_LOCATION`, `ACCESS_BACKGROUND_LOCATION`) | GPS samples and LTE cell details while driving. The logger starts at boot with no screen open, so Android 11 counts this as background use. |
 | Bluetooth (`BLUETOOTH`) | List paired devices, and see when the car connects or disconnects. |
 | Run at startup (`RECEIVE_BOOT_COMPLETED`) | Start the logger after a restart. |
+| Keep awake (`WAKE_LOCK`) | Keep the phone awake for the few seconds a Fix takes, so an automatic Fix with the screen off still switches back on time. |
 | Foreground service | Keep the logger running, with a low-priority notification. |
 | Shizuku | Change the network mode or flight mode as the shell user. |
 
@@ -75,10 +77,10 @@ On Android 11, "Allow all the time" can't be granted from a pop-up. The app asks
 | `network_events.csv` | timestamp, data_type, voice_type, signal_dbm, in_drive |
 | `drives.csv` | drive_id, start, end |
 | `location_samples.csv` | timestamp, lat, lon, accuracy_m, speed_mps, drive_id, data_type, voice_type, lte_cells |
-| `fix_attempts.csv` | timestamp, method, type_before, type_after, seconds_on_2g_before, result, duration_ms |
+| `fix_attempts.csv` | timestamp, method, type_before, type_after, seconds_on_2g_before, result, duration_ms, source |
 | `shizuku_stops.csv` | timestamp |
 
-Timestamps are UTC, in ISO 8601. `lte_cells` lists each LTE cell the phone can see as `ci:pci:earfcn:bands:rsrp`, separated by `;`. A value the phone didn't report is left empty.
+Timestamps are UTC, in ISO 8601. `lte_cells` lists each LTE cell the phone can see as `ci:pci:earfcn:bands:rsrp`, separated by `;`. A value the phone didn't report is left empty. `source` is `MANUAL` for a Fix you tapped and `CAR_DISCONNECT` for an automatic one.
 
 ## Development
 

@@ -1,6 +1,7 @@
 package com.wyatthui.unstick4g.data
 
 import android.content.Context
+import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
@@ -56,6 +57,7 @@ data class FixAttempt(
     val secondsOn2gBefore: Long?,
     val result: String,
     val durationMs: Long,
+    @ColumnInfo(defaultValue = "MANUAL") val source: String,
 )
 
 @Entity(tableName = "shizuku_stops")
@@ -147,7 +149,7 @@ interface LogDao {
 
 @Database(
     entities = [NetworkEvent::class, Drive::class, LocationSample::class, FixAttempt::class, ShizukuStop::class],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -156,7 +158,7 @@ abstract class AppDatabase : RoomDatabase() {
     companion object {
         fun open(context: Context): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, "unstick4g.db")
-                .addMigrations(ADD_SHIZUKU_STOPS)
+                .addMigrations(ADD_SHIZUKU_STOPS, ADD_FIX_SOURCE)
                 .build()
 
         private val ADD_SHIZUKU_STOPS = object : Migration(1, 2) {
@@ -165,6 +167,12 @@ abstract class AppDatabase : RoomDatabase() {
                     "CREATE TABLE IF NOT EXISTS `shizuku_stops` " +
                         "(`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `timestamp` INTEGER NOT NULL)",
                 )
+            }
+        }
+
+        private val ADD_FIX_SOURCE = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `fix_attempts` ADD COLUMN `source` TEXT NOT NULL DEFAULT 'MANUAL'")
             }
         }
     }

@@ -4,6 +4,7 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.PowerManager
 import android.telephony.SubscriptionManager
 import android.telephony.TelephonyManager
 import com.wyatthui.unstick4g.FixMethodSetting
@@ -30,6 +31,8 @@ enum class FixResult(val shortLabel: String) {
     FAILED("Failed"),
 }
 
+enum class FixSource { MANUAL, CAR_DISCONNECT }
+
 data class FixOutcome(val result: FixResult, val message: String)
 
 sealed interface FixState {
@@ -55,23 +58,30 @@ class FixRunner(
     private val flightMode = FlightModeKicker(system)
     private val telephony = context.getSystemService(TelephonyManager::class.java)
     private val busy = AtomicBoolean(false)
+    private val wakeLock = context.getSystemService(PowerManager::class.java)
+        .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Unstick4G:fix")
+        .apply { setReferenceCounted(false) }
     private val mutableState = MutableStateFlow<FixState>(FixState.Idle)
     val state: StateFlow<FixState> = mutableState
 
-    fun start() {
+    fun start(source: FixSource = FixSource.MANUAL) {
         if (!busy.compareAndSet(false, true)) return
+        wakeLock.acquire(WAKE_LOCK_TIMEOUT_MS)
         mutableState.value = FixState.Working
         scope.launch {
-            val outcome = runCatching { fix() }
+            val outcome = runCatching { fix(source) }
                 .getOrElse { FixOutcome(FixResult.FAILED, "Fix failed: ${it.message}") }
-            Notifications.showFixResult(context, outcome.message)
+            wakeLock.release()
+            if (shouldNotify(source, outcome.result)) {
+                Notifications.showFixResult(context, notificationText(source, outcome.message))
+            }
             mutableState.value = FixState.Done(outcome, System.currentTimeMillis())
             busy.set(false)
         }
     }
 
     @SuppressLint("MissingPermission")
-    private suspend fun fix(): FixOutcome {
+    private suspend fun fix(source: FixSource): FixOutcome {
         refusalReason()?.let { return FixOutcome(FixResult.REFUSED, it) }
         val kicker = chooseKicker()
             ?: return FixOutcome(FixResult.REFUSED, "No fix method works for \"${settings.fixMethod.label}\".")
@@ -86,7 +96,7 @@ class FixRunner(
                 FixOutcome(FixResult.STILL_ON_2G, "Still on 2G — probably no usable 4G here.")
             }
         } catch (e: Exception) {
-            restorePendingFlip()
+            restoreOrAlert()
             FixOutcome(FixResult.FAILED, "Fix failed: ${e.message}")
         }
         dao.insert(
@@ -98,6 +108,7 @@ class FixRunner(
                 secondsOn2gBefore = secondsOn2g,
                 result = outcome.result.name,
                 durationMs = System.currentTimeMillis() - startedAt,
+                source = source.name,
             ),
         )
         return outcome
@@ -137,15 +148,18 @@ class FixRunner(
     }
 
     fun restorePendingFlip() {
-        scope.launch {
-            runCatching { flip.restorePending() }
-                .onFailure { Notifications.showRestoreFailed(context, it.message.orEmpty()) }
-        }
+        scope.launch { restoreOrAlert() }
+    }
+
+    private suspend fun restoreOrAlert() {
+        runCatching { flip.restorePending() }
+            .onFailure { Notifications.showRestoreFailed(context, it.message.orEmpty()) }
     }
 
     private companion object {
         const val WATCH_SECONDS = 30
         const val EVENT_LOOKBACK = 500
+        const val WAKE_LOCK_TIMEOUT_MS = 60_000L
     }
 }
 
@@ -156,3 +170,9 @@ fun secondsOn2gBefore(tapAt: Long, events: List<NetworkEvent>): Long? {
     if (current2gRun.isEmpty()) return 0
     return (tapAt - current2gRun.last().timestamp) / 1_000
 }
+
+fun shouldNotify(source: FixSource, result: FixResult) =
+    source == FixSource.MANUAL || result != FixResult.BACK_ON_4G
+
+fun notificationText(source: FixSource, message: String) =
+    if (source == FixSource.CAR_DISCONNECT) "Auto-fix: $message" else message

@@ -14,6 +14,7 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.IBinder
+import android.os.PowerManager
 import android.os.Looper
 import android.telephony.CellInfo
 import android.telephony.CellInfoLte
@@ -29,6 +30,8 @@ import com.wyatthui.unstick4g.app
 import com.wyatthui.unstick4g.data.Drive
 import com.wyatthui.unstick4g.data.LocationSample
 import com.wyatthui.unstick4g.data.NetworkEvent
+import com.wyatthui.unstick4g.fix.AutoFixer
+import com.wyatthui.unstick4g.fix.FixSource
 import com.wyatthui.unstick4g.shizuku.ShizukuState
 import com.wyatthui.unstick4g.shizuku.ShizukuStatus
 import kotlinx.coroutines.MainScope
@@ -59,6 +62,19 @@ class LoggerService : Service() {
     private var gpsOn = false
     private var latestSignalDbm: Int? = null
     private var driving = DrivingState()
+    private val settleWakeLock by lazy {
+        getSystemService(PowerManager::class.java)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Unstick4G:settle")
+            .apply { setReferenceCounted(false) }
+    }
+    private val autoFixer = AutoFixer(
+        scope,
+        { app.settings.autoFix },
+        { mutableStatus.value.network },
+        { settleWakeLock.acquire(it) },
+    ) {
+        app.fixRunner.start(FixSource.CAR_DISCONNECT)
+    }
 
     @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
     private val phoneStateListener = object : PhoneStateListener() {
@@ -89,7 +105,7 @@ class LoggerService : Service() {
         )
         telephony = getSystemService(TelephonyManager::class.java)
         locationManager = getSystemService(LocationManager::class.java)
-        carTracker = CarTracker(this, app.settings, ::onCarConnectionChanged)
+        carTracker = CarTracker(this, app.settings, ::onCarConnectionChanged, autoFixer::onCarConnectionChanged)
         mutableStatus.update { it.copy(running = true) }
         updateDriving(driving.copy(locationEnabled = locationManager.isLocationEnabled))
         ContextCompat.registerReceiver(

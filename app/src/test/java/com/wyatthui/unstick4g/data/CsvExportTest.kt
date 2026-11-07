@@ -73,7 +73,7 @@ class CsvExportTest {
     @Test
     fun `fix attempts export even with no rows, so every file has a header`() {
         assertEquals(
-            "timestamp,method,type_before,type_after,seconds_on_2g_before,result,duration_ms\n",
+            "timestamp,method,type_before,type_after,seconds_on_2g_before,result,duration_ms,source\n",
             fixAttemptsCsv(emptyList()),
         )
     }

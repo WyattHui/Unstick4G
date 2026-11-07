@@ -18,12 +18,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -49,6 +51,7 @@ import com.wyatthui.unstick4g.data.NetworkEvent
 import com.wyatthui.unstick4g.data.exportZip
 import com.wyatthui.unstick4g.data.shareIntent
 import com.wyatthui.unstick4g.fix.FixResult
+import com.wyatthui.unstick4g.fix.FixSource
 import com.wyatthui.unstick4g.fix.FixState
 import com.wyatthui.unstick4g.logger.DrivingState
 import com.wyatthui.unstick4g.logger.LoggerService
@@ -140,7 +143,8 @@ private fun eventText(event: NetworkEvent) = buildString {
 }
 
 private fun attemptText(attempt: FixAttempt) = buildString {
-    append("Fix (${attempt.method.lowercase()}): ${FixResult.valueOf(attempt.result).shortLabel}")
+    val how = attempt.method.lowercase() + if (attempt.source == FixSource.CAR_DISCONNECT.name) ", auto" else ""
+    append("Fix ($how): ${FixResult.valueOf(attempt.result).shortLabel}")
     attempt.secondsOn2gBefore?.let { append(" · ${it}s on 2G before") }
 }
 
@@ -242,6 +246,7 @@ private fun SettingsSection(settings: Settings) {
     val paired = remember { pairedDevices(context) }
     var carAddress by remember { mutableStateOf(settings.carAddress) }
     var fixMethod by remember { mutableStateOf(settings.fixMethod) }
+    var autoFix by remember { mutableStateOf(settings.autoFix) }
 
     Section("Settings") {
         Text("Car Bluetooth", style = MaterialTheme.typography.titleSmall)
@@ -260,6 +265,10 @@ private fun SettingsSection(settings: Settings) {
                 fixMethod = method
             }
         }
+        SwitchRow("Auto-fix when the car disconnects", checked = autoFix) {
+            settings.autoFix = it
+            autoFix = it
+        }
     }
 }
 
@@ -275,6 +284,20 @@ private fun ChoiceRow(label: String, selected: Boolean, onSelect: () -> Unit) {
         RadioButton(selected = selected, onClick = null)
         Spacer(Modifier.width(8.dp))
         Text(label)
+    }
+}
+
+@Composable
+private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .toggleable(value = checked, onValueChange = onChange, role = Role.Switch)
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, Modifier.weight(1f))
+        Switch(checked = checked, onCheckedChange = null)
     }
 }
 

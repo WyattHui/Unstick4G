@@ -88,7 +88,7 @@ fun locationSamplesCsv(samples: List<LocationSample>) = csv(
 fun fixAttemptsCsv(attempts: List<FixAttempt>) = csv(
     listOf(
         "timestamp", "method", "type_before", "type_after",
-        "seconds_on_2g_before", "result", "duration_ms",
+        "seconds_on_2g_before", "result", "duration_ms", "source",
     ),
     attempts.map {
         listOf(
@@ -99,6 +99,7 @@ fun fixAttemptsCsv(attempts: List<FixAttempt>) = csv(
             it.secondsOn2gBefore,
             it.result,
             it.durationMs,
+            it.source,
         )
     },
 )
