@@ -6,6 +6,8 @@ A small Android app that gets my phone back from "stuck on 2G" to 4G with one ta
 
 It is a personal tool for one phone: a Samsung Galaxy A60 on Android 11, on a UK network.
 
+<img src="docs/screenshot.png" alt="Unstick4G main screen: Shizuku ready, logger on, network LTE, and the Fix 4G button with its last result" width="360">
+
 ## Why it exists
 
 - The UK has switched off 3G, so when 4G drops, the phone falls straight to 2G.
