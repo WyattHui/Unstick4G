@@ -79,6 +79,13 @@ class CsvExportTest {
     }
 
     @Test
+    fun `Shizuku stops export their UTC time, to show when Shizuku died`() {
+        val csv = shizukuStopsCsv(listOf(ShizukuStop(timestamp = AT_2026_10_25_14_03_12_UTC)))
+
+        assertEquals("timestamp\n2026-10-25T14:03:12Z\n", csv)
+    }
+
+    @Test
     fun `fields with commas, quotes or newlines are quoted so Python reads them as one value`() {
         val csv = csv(listOf("a", "b", "c"), listOf(listOf("x,y", "say \"hi\"", "two\nlines")))
 

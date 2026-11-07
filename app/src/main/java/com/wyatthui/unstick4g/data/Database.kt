@@ -11,6 +11,8 @@ import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.Transaction
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 @Entity(tableName = "network_events", indices = [Index("timestamp")])
@@ -56,6 +58,12 @@ data class FixAttempt(
     val durationMs: Long,
 )
 
+@Entity(tableName = "shizuku_stops")
+data class ShizukuStop(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val timestamp: Long,
+)
+
 @Dao
 interface LogDao {
     @Insert
@@ -69,6 +77,9 @@ interface LogDao {
 
     @Insert
     suspend fun insert(attempt: FixAttempt)
+
+    @Insert
+    suspend fun insert(stop: ShizukuStop)
 
     @Query("UPDATE drives SET endedAt = :at WHERE id = :id")
     suspend fun endDrive(id: Long, at: Long)
@@ -106,12 +117,16 @@ interface LogDao {
     @Query("SELECT * FROM fix_attempts ORDER BY timestamp")
     suspend fun allFixAttempts(): List<FixAttempt>
 
+    @Query("SELECT * FROM shizuku_stops ORDER BY timestamp")
+    suspend fun allShizukuStops(): List<ShizukuStop>
+
     @Transaction
     suspend fun deleteOlderThan(cutoff: Long) {
         deleteEventsBefore(cutoff)
         deleteDrivesBefore(cutoff)
         deleteSamplesBefore(cutoff)
         deleteFixAttemptsBefore(cutoff)
+        deleteShizukuStopsBefore(cutoff)
     }
 
     @Query("DELETE FROM network_events WHERE timestamp < :cutoff")
@@ -125,11 +140,14 @@ interface LogDao {
 
     @Query("DELETE FROM fix_attempts WHERE timestamp < :cutoff")
     suspend fun deleteFixAttemptsBefore(cutoff: Long)
+
+    @Query("DELETE FROM shizuku_stops WHERE timestamp < :cutoff")
+    suspend fun deleteShizukuStopsBefore(cutoff: Long)
 }
 
 @Database(
-    entities = [NetworkEvent::class, Drive::class, LocationSample::class, FixAttempt::class],
-    version = 1,
+    entities = [NetworkEvent::class, Drive::class, LocationSample::class, FixAttempt::class, ShizukuStop::class],
+    version = 2,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -137,6 +155,17 @@ abstract class AppDatabase : RoomDatabase() {
 
     companion object {
         fun open(context: Context): AppDatabase =
-            Room.databaseBuilder(context, AppDatabase::class.java, "unstick4g.db").build()
+            Room.databaseBuilder(context, AppDatabase::class.java, "unstick4g.db")
+                .addMigrations(ADD_SHIZUKU_STOPS)
+                .build()
+
+        private val ADD_SHIZUKU_STOPS = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `shizuku_stops` " +
+                        "(`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `timestamp` INTEGER NOT NULL)",
+                )
+            }
+        }
     }
 }

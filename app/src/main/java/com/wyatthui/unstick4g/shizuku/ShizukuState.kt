@@ -36,3 +36,6 @@ object ShizukuState {
         else -> ShizukuStatus.READY
     }
 }
+
+fun shizukuStopped(previous: ShizukuStatus?, current: ShizukuStatus) =
+    current == ShizukuStatus.NOT_RUNNING && (previous == ShizukuStatus.READY || previous == ShizukuStatus.NO_PERMISSION)

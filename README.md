@@ -45,7 +45,7 @@ Unstick4G gets shell-level access through [Shizuku](https://github.com/RikkaApps
 5. Tap Start.
 6. Open Unstick4G and tap Allow next to Shizuku.
 
-Shizuku stops when the phone restarts. After a restart, Unstick4G posts "Shizuku is off — tap to start it" and the tile shows "Needs Shizuku". Repeat step 5.
+Shizuku stops when the phone restarts, and it can occasionally stop on its own. After a restart, Unstick4G posts "Shizuku is off — tap to start it" and the tile shows "Needs Shizuku". If Shizuku stops while the phone is on, Unstick4G posts the same alert and records the time in `shizuku_stops.csv`. Repeat step 5.
 
 ## Permissions
 
@@ -74,6 +74,7 @@ On Android 11, "Allow all the time" can't be granted from a pop-up. The app asks
 | `drives.csv` | drive_id, start, end |
 | `location_samples.csv` | timestamp, lat, lon, accuracy_m, speed_mps, drive_id, data_type, voice_type, lte_cells |
 | `fix_attempts.csv` | timestamp, method, type_before, type_after, seconds_on_2g_before, result, duration_ms |
+| `shizuku_stops.csv` | timestamp |
 
 Timestamps are UTC, in ISO 8601. `lte_cells` lists each LTE cell the phone can see as `ci:pci:earfcn:bands:rsrp`, separated by `;`. A value the phone didn't report is left empty.
 

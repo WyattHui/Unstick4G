@@ -23,6 +23,7 @@ suspend fun exportZip(context: Context, dao: LogDao): File {
         "drives.csv" to drivesCsv(dao.allDrives()),
         "location_samples.csv" to locationSamplesCsv(dao.allSamples()),
         "fix_attempts.csv" to fixAttemptsCsv(dao.allFixAttempts()),
+        "shizuku_stops.csv" to shizukuStopsCsv(dao.allShizukuStops()),
     )
     val dir = File(context.cacheDir, "exports").apply { mkdirs() }
     dir.listFiles()?.forEach { it.delete() }
@@ -100,6 +101,11 @@ fun fixAttemptsCsv(attempts: List<FixAttempt>) = csv(
             it.durationMs,
         )
     },
+)
+
+fun shizukuStopsCsv(stops: List<ShizukuStop>) = csv(
+    listOf("timestamp"),
+    stops.map { listOf(timestamp(it.timestamp)) },
 )
 
 fun csv(header: List<String>, rows: List<List<Any?>>): String =
