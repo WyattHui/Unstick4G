@@ -13,6 +13,7 @@ object Notifications {
     private const val SHIZUKU_OFF_ID = 2
     private const val FIX_RESULT_ID = 3
     private const val RESTORE_FAILED_ID = 4
+    private const val REFIX_GAVE_UP_ID = 5
     private const val LOGGER_CHANNEL = "logger"
     private const val ALERTS_CHANNEL = "alerts"
 
@@ -44,6 +45,10 @@ object Notifications {
 
     fun showFixResult(context: Context, message: String) {
         alert(context, FIX_RESULT_ID, message, null, mainActivity(context))
+    }
+
+    fun showRefixGaveUp(context: Context) {
+        alert(context, REFIX_GAVE_UP_ID, "Auto-fix: 4G keeps dropping here — automatic Fixes paused for 30 minutes", null, mainActivity(context))
     }
 
     fun showRestoreFailed(context: Context, error: String) {

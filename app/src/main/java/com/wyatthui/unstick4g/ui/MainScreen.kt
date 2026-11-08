@@ -143,7 +143,7 @@ private fun eventText(event: NetworkEvent) = buildString {
 }
 
 private fun attemptText(attempt: FixAttempt) = buildString {
-    val how = attempt.method.lowercase() + if (attempt.source == FixSource.CAR_DISCONNECT.name) ", auto" else ""
+    val how = attempt.method.lowercase() + if (attempt.source != FixSource.MANUAL.name) ", auto" else ""
     append("Fix ($how): ${FixResult.valueOf(attempt.result).shortLabel}")
     attempt.secondsOn2gBefore?.let { append(" · ${it}s on 2G before") }
 }
@@ -265,7 +265,7 @@ private fun SettingsSection(settings: Settings) {
                 fixMethod = method
             }
         }
-        SwitchRow("Auto-fix when the car disconnects", checked = autoFix) {
+        SwitchRow("Fix 2G automatically", checked = autoFix) {
             settings.autoFix = it
             autoFix = it
         }

@@ -10,6 +10,7 @@ import kotlinx.coroutines.launch
 class AutoFixer(
     private val scope: CoroutineScope,
     private val enabled: () -> Boolean,
+    private val blocked: () -> Boolean,
     private val network: () -> NetworkSnapshot?,
     private val keepAwake: (millis: Long) -> Unit,
     private val now: () -> Long,
@@ -31,6 +32,7 @@ class AutoFixer(
             for (at in FIRST_MINUTE_CHECKS) {
                 waitUntil(at)
                 if (!enabled()) return@launch
+                if (blocked()) continue
                 if (onTwoG()) {
                     fix()
                     break
@@ -39,7 +41,7 @@ class AutoFixer(
             for (at in RETRIES) {
                 waitUntil(at)
                 if (!enabled() || now() - parkedAt > RETRY_DEADLINE_MS) return@launch
-                if (onTwoG()) fix()
+                if (!blocked() && onTwoG()) fix()
             }
         }
     }

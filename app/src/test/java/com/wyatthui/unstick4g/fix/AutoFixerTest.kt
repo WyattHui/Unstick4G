@@ -24,6 +24,7 @@ private const val MINUTE = 60_000L
 class AutoFixerTest {
     private var network: NetworkSnapshot? = ON_4G
     private var enabled = true
+    private var blocked = false
     private var fixes = 0
     private var awakeFor = 0L
     private var slept = 0L
@@ -105,6 +106,22 @@ class AutoFixerTest {
 
         // With the screen off the CPU sleeps, and the minute would stop counting, so the Fix could come hours late.
         assertTrue(awakeFor > 60_000)
+    }
+
+    @Test
+    fun `parking during a call skips those checks, and a later check still fixes`() = runTest {
+        network = ON_2G
+        blocked = true
+
+        autoFixer().parked()
+        advanceTimeBy(61_000)
+
+        // A refused Fix during a call would only alert you mid-call.
+        assertEquals(0, fixes)
+
+        blocked = false
+        advanceTimeBy(4 * MINUTE)
+        assertEquals(1, fixes)
     }
 
     @Test
@@ -211,7 +228,7 @@ class AutoFixerTest {
         assertEquals(1, fixes)
     }
 
-    private fun TestScope.autoFixer() = AutoFixer(this, { enabled }, { network }, { awakeFor = it }, { currentTime + slept }) { fixes++ }
+    private fun TestScope.autoFixer() = AutoFixer(this, { enabled }, { blocked }, { network }, { awakeFor = it }, { currentTime + slept }) { fixes++ }
 
     private fun AutoFixer.parked() = onCarConnectionChanged(connected = false)
 }

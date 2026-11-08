@@ -25,7 +25,9 @@ class FixNotificationTest {
 
     @Test
     fun `an automatic Fix's message says it was automatic, so an unexpected alert is explained`() {
-        assertEquals("Auto-fix: Still on 2G", notificationText(FixSource.CAR_DISCONNECT, "Still on 2G"))
+        FixSource.entries.filter { it != FixSource.MANUAL }.forEach {
+            assertEquals(it.name, "Auto-fix: Still on 2G", notificationText(it, "Still on 2G"))
+        }
         assertEquals("Still on 2G", notificationText(FixSource.MANUAL, "Still on 2G"))
     }
 }

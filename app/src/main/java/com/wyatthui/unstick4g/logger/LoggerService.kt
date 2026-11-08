@@ -33,6 +33,8 @@ import com.wyatthui.unstick4g.data.LocationSample
 import com.wyatthui.unstick4g.data.NetworkEvent
 import com.wyatthui.unstick4g.fix.AutoFixer
 import com.wyatthui.unstick4g.fix.FixSource
+import com.wyatthui.unstick4g.fix.FixState
+import com.wyatthui.unstick4g.fix.StuckWatcher
 import com.wyatthui.unstick4g.shizuku.ShizukuState
 import com.wyatthui.unstick4g.shizuku.ShizukuStatus
 import kotlinx.coroutines.MainScope
@@ -68,9 +70,19 @@ class LoggerService : Service() {
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Unstick4G:settle")
             .apply { setReferenceCounted(false) }
     }
+    private val stuckWatcher = StuckWatcher(
+        scope,
+        { app.settings.autoFix },
+        { app.fixRunner.state.value is FixState.Working },
+        { autoFixBlocked() },
+        { System.currentTimeMillis() },
+        { app.fixRunner.start(it) },
+        { Notifications.showRefixGaveUp(this) },
+    )
     private val autoFixer = AutoFixer(
         scope,
         { app.settings.autoFix },
+        { autoFixBlocked() || stuckWatcher.isPaused() },
         { currentNetwork() },
         { settleWakeLock.acquire(it) },
         { SystemClock.elapsedRealtime() },
@@ -119,6 +131,11 @@ class LoggerService : Service() {
         scope.launch { driveLock.withLock { dao.endOpenDrives() } }
         carTracker.start()
         scope.launch { pollAndPurge() }
+        scope.launch {
+            app.fixRunner.state.collect { state ->
+                if (state is FixState.Done) stuckWatcher.onFixFinished(state.source, state.outcome.result, state.at)
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -157,6 +174,7 @@ class LoggerService : Service() {
                     null
                 }
                 updateDriving(driving.copy(driveId = driveId))
+                stuckWatcher.onCarConnectionChanged(connected)
             }
         }
     }
@@ -199,6 +217,7 @@ class LoggerService : Service() {
         if (network == mutableStatus.value.network) return
         mutableStatus.update { it.copy(network = network) }
         refreshNotification()
+        stuckWatcher.onNetworkChanged(network)
         val event = NetworkEvent(
             timestamp = System.currentTimeMillis(),
             dataType = network.dataType,
@@ -286,6 +305,13 @@ class LoggerService : Service() {
             else -> network
         }
     }
+
+    private fun autoFixBlocked() = onCall() || ShizukuState.status.value != ShizukuStatus.READY
+
+    @Suppress("DEPRECATION")
+    @SuppressLint("MissingPermission")
+    private fun onCall() =
+        hasPermission(Manifest.permission.READ_PHONE_STATE) && telephony.callState != TelephonyManager.CALL_STATE_IDLE
 
     @SuppressLint("MissingPermission")
     private fun currentNetwork() = if (hasPermission(Manifest.permission.READ_PHONE_STATE)) {

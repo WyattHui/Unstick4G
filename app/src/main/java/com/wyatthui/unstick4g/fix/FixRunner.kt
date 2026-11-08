@@ -31,7 +31,7 @@ enum class FixResult(val shortLabel: String) {
     FAILED("Failed"),
 }
 
-enum class FixSource { MANUAL, CAR_DISCONNECT }
+enum class FixSource { MANUAL, CAR_DISCONNECT, STUCK_WHILE_DRIVING, FELL_BACK }
 
 data class FixOutcome(val result: FixResult, val message: String)
 
@@ -40,7 +40,7 @@ sealed interface FixState {
 
     data object Working : FixState
 
-    data class Done(val outcome: FixOutcome, val at: Long) : FixState
+    data class Done(val outcome: FixOutcome, val at: Long, val source: FixSource) : FixState
 }
 
 class FixRunner(
@@ -75,7 +75,7 @@ class FixRunner(
             if (shouldNotify(source, outcome.result)) {
                 Notifications.showFixResult(context, notificationText(source, outcome.message))
             }
-            mutableState.value = FixState.Done(outcome, System.currentTimeMillis())
+            mutableState.value = FixState.Done(outcome, System.currentTimeMillis(), source)
             busy.set(false)
         }
     }
@@ -175,4 +175,4 @@ fun shouldNotify(source: FixSource, result: FixResult) =
     source == FixSource.MANUAL || result != FixResult.BACK_ON_4G
 
 fun notificationText(source: FixSource, message: String) =
-    if (source == FixSource.CAR_DISCONNECT) "Auto-fix: $message" else message
+    if (source != FixSource.MANUAL) "Auto-fix: $message" else message
