@@ -9,6 +9,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -17,6 +18,7 @@ import org.junit.Test
 private val ON_2G = NetworkSnapshot(NETWORK_TYPE_EDGE, NETWORK_TYPE_GSM)
 private val ON_4G = NetworkSnapshot(NETWORK_TYPE_LTE, NETWORK_TYPE_LTE)
 private val NO_SIGNAL = NetworkSnapshot(NETWORK_TYPE_UNKNOWN, NETWORK_TYPE_UNKNOWN)
+private const val MINUTE = 60_000L
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AutoFixerTest {
@@ -24,16 +26,76 @@ class AutoFixerTest {
     private var enabled = true
     private var fixes = 0
     private var awakeFor = 0L
+    private var slept = 0L
 
     @Test
-    fun `parking on 2G fixes once, a minute later`() = runTest {
+    fun `parking on 2G fixes once, 10 seconds later`() = runTest {
         network = ON_2G
 
         autoFixer().parked()
-        advanceTimeBy(59_000)
+        advanceTimeBy(9_000)
         assertEquals(0, fixes)
 
+        advanceTimeBy(2_000)
+        assertEquals(1, fixes)
+
+        network = ON_4G
         advanceUntilIdle()
+        assertEquals(1, fixes)
+    }
+
+    @Test
+    fun `while still on 2G it tries again 5, 15 and 45 minutes after parking`() = runTest {
+        network = ON_2G
+
+        autoFixer().parked()
+        advanceTimeBy(11_000)
+        assertEquals(1, fixes)
+        advanceTimeBy(5 * MINUTE - 11_000 + 1_000)
+        assertEquals(2, fixes)
+        advanceTimeBy(10 * MINUTE)
+        assertEquals(3, fixes)
+        advanceTimeBy(30 * MINUTE)
+        assertEquals(4, fixes)
+
+        advanceUntilIdle()
+        assertEquals(4, fixes)
+    }
+
+    @Test
+    fun `turning the switch off after the first Fix stops the retries`() = runTest {
+        network = ON_2G
+
+        autoFixer().parked()
+        advanceTimeBy(11_000)
+        assertEquals(1, fixes)
+        enabled = false
+        advanceUntilIdle()
+
+        assertEquals(1, fixes)
+    }
+
+    @Test
+    fun `a retry that comes more than an hour after parking is skipped`() = runTest {
+        network = ON_2G
+
+        autoFixer().parked()
+        advanceTimeBy(11_000)
+        assertEquals(1, fixes)
+        slept = 120 * MINUTE
+        advanceUntilIdle()
+
+        // While the phone sleeps the countdown stops, so a late retry could fire somewhere unrelated to the parking.
+        assertEquals(1, fixes)
+    }
+
+    @Test
+    fun `a drop to 2G a few minutes after parking is caught by the 5-minute check`() = runTest {
+        autoFixer().parked()
+        advanceTimeBy(3 * MINUTE)
+        network = ON_2G
+        advanceTimeBy(2 * MINUTE + 1_000)
+
         assertEquals(1, fixes)
     }
 
@@ -60,24 +122,35 @@ class AutoFixerTest {
     }
 
     @Test
-    fun `parking on 4G and dropping to 2G within the minute is fixed`() = runTest {
+    fun `parking on 4G and dropping to 2G within the minute is fixed at the next check`() = runTest {
         autoFixer().parked()
         advanceTimeBy(40_000)
         network = ON_2G
-        advanceUntilIdle()
+        advanceTimeBy(11_000)
 
         assertEquals(1, fixes)
     }
 
     @Test
-    fun `a no-signal moment at parking that settles on 2G is fixed`() = runTest {
-        network = NO_SIGNAL
-
+    fun `after 45 minutes it stops checking`() = runTest {
         autoFixer().parked()
-        advanceTimeBy(1_000)
+        advanceTimeBy(45 * MINUTE + 1_000)
         network = ON_2G
         advanceUntilIdle()
 
+        assertEquals(0, fixes)
+    }
+
+    @Test
+    fun `a no-signal moment at parking is fixed at the first check after it settles on 2G`() = runTest {
+        network = NO_SIGNAL
+
+        autoFixer().parked()
+        advanceTimeBy(25_000)
+        network = ON_2G
+        advanceTimeBy(6_000)
+
+        // The logs show no-signal moments of up to 45 s before 2G, so one early check alone would miss them.
         assertEquals(1, fixes)
     }
 
@@ -114,11 +187,12 @@ class AutoFixerTest {
 
     @Test
     fun `turning the switch off during the minute stops the Fix`() = runTest {
-        network = ON_2G
+        network = NO_SIGNAL
 
         autoFixer().parked()
-        advanceTimeBy(30_000)
+        advanceTimeBy(5_000)
         enabled = false
+        network = ON_2G
         advanceUntilIdle()
 
         assertEquals(0, fixes)
@@ -130,14 +204,14 @@ class AutoFixerTest {
         val autoFixer = autoFixer()
 
         autoFixer.parked()
-        advanceTimeBy(30_000)
+        advanceTimeBy(5_000)
         autoFixer.parked()
-        advanceUntilIdle()
+        advanceTimeBy(11_000)
 
         assertEquals(1, fixes)
     }
 
-    private fun TestScope.autoFixer() = AutoFixer(this, { enabled }, { network }, { awakeFor = it }) { fixes++ }
+    private fun TestScope.autoFixer() = AutoFixer(this, { enabled }, { network }, { awakeFor = it }, { currentTime + slept }) { fixes++ }
 
     private fun AutoFixer.parked() = onCarConnectionChanged(connected = false)
 }

@@ -14,8 +14,9 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.IBinder
-import android.os.PowerManager
 import android.os.Looper
+import android.os.PowerManager
+import android.os.SystemClock
 import android.telephony.CellInfo
 import android.telephony.CellInfoLte
 import android.telephony.PhoneStateListener
@@ -70,8 +71,9 @@ class LoggerService : Service() {
     private val autoFixer = AutoFixer(
         scope,
         { app.settings.autoFix },
-        { mutableStatus.value.network },
+        { currentNetwork() },
         { settleWakeLock.acquire(it) },
+        { SystemClock.elapsedRealtime() },
     ) {
         app.fixRunner.start(FixSource.CAR_DISCONNECT)
     }
@@ -192,10 +194,8 @@ class LoggerService : Service() {
         refreshNotification()
     }
 
-    @SuppressLint("MissingPermission")
     private fun recordNetworkIfChanged() {
-        if (!hasPermission(Manifest.permission.READ_PHONE_STATE)) return
-        val network = NetworkSnapshot(telephony.dataNetworkType, telephony.voiceNetworkType)
+        val network = currentNetwork() ?: return
         if (network == mutableStatus.value.network) return
         mutableStatus.update { it.copy(network = network) }
         refreshNotification()
@@ -285,6 +285,13 @@ class LoggerService : Service() {
             driving.inCar -> "$network · in car, location off"
             else -> network
         }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun currentNetwork() = if (hasPermission(Manifest.permission.READ_PHONE_STATE)) {
+        NetworkSnapshot(telephony.dataNetworkType, telephony.voiceNetworkType)
+    } else {
+        null
     }
 
     private fun hasPermission(permission: String) =
