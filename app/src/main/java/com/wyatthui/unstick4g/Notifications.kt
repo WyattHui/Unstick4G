@@ -13,7 +13,8 @@ object Notifications {
     private const val SHIZUKU_OFF_ID = 2
     private const val FIX_RESULT_ID = 3
     private const val RESTORE_FAILED_ID = 4
-    private const val REFIX_GAVE_UP_ID = 5
+    private const val KEEPS_DROPPING_ID = 5
+    private const val AUTO_FIX_RESULT_ID = 6
     private const val LOGGER_CHANNEL = "logger"
     private const val ALERTS_CHANNEL = "alerts"
 
@@ -43,12 +44,18 @@ object Notifications {
         manager(context).cancel(SHIZUKU_OFF_ID)
     }
 
-    fun showFixResult(context: Context, message: String) {
-        alert(context, FIX_RESULT_ID, message, null, mainActivity(context))
+    fun showFixResult(context: Context, message: String, automatic: Boolean) {
+        val id = if (automatic) AUTO_FIX_RESULT_ID else FIX_RESULT_ID
+        alert(context, id, message, null, mainActivity(context), quietIfShowing = automatic)
     }
 
-    fun showRefixGaveUp(context: Context) {
-        alert(context, REFIX_GAVE_UP_ID, "Auto-fix: 4G keeps dropping here — automatic Fixes paused for 30 minutes", null, mainActivity(context))
+    fun showKeepsDropping(context: Context) {
+        alert(context, KEEPS_DROPPING_ID, "Auto-fix: 4G keeps dropping here — trying less often", null, mainActivity(context), quietIfShowing = true)
+    }
+
+    fun clearAutoFixAlerts(context: Context) {
+        manager(context).cancel(AUTO_FIX_RESULT_ID)
+        manager(context).cancel(KEEPS_DROPPING_ID)
     }
 
     fun showRestoreFailed(context: Context, error: String) {
@@ -61,13 +68,14 @@ object Notifications {
         )
     }
 
-    private fun alert(context: Context, id: Int, title: String, text: String?, tap: Intent) {
+    private fun alert(context: Context, id: Int, title: String, text: String?, tap: Intent, quietIfShowing: Boolean = false) {
         val notification = Notification.Builder(context, ALERTS_CHANNEL)
             .setSmallIcon(R.drawable.ic_tile)
             .setContentTitle(title)
             .setContentText(text)
             .setContentIntent(pendingActivity(context, id, tap))
             .setAutoCancel(true)
+            .setOnlyAlertOnce(quietIfShowing)
             .build()
         manager(context).notify(id, notification)
     }

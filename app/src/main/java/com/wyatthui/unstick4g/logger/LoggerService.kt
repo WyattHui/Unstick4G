@@ -16,7 +16,6 @@ import android.location.LocationManager
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
-import android.os.SystemClock
 import android.telephony.CellInfo
 import android.telephony.CellInfoLte
 import android.telephony.PhoneStateListener
@@ -76,16 +75,18 @@ class LoggerService : Service() {
         { app.fixRunner.state.value is FixState.Working },
         { autoFixBlocked() },
         { System.currentTimeMillis() },
+        { currentNetwork() },
         { app.fixRunner.start(it) },
-        { Notifications.showRefixGaveUp(this) },
+        { Notifications.showKeepsDropping(this) },
+        { Notifications.clearAutoFixAlerts(this) },
     )
     private val autoFixer = AutoFixer(
         scope,
         { app.settings.autoFix },
-        { autoFixBlocked() || stuckWatcher.isPaused() },
+        { autoFixBlocked() },
         { currentNetwork() },
         { settleWakeLock.acquire(it) },
-        { SystemClock.elapsedRealtime() },
+        { stuckWatcher.onParked() },
     ) {
         app.fixRunner.start(FixSource.CAR_DISCONNECT)
     }

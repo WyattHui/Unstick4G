@@ -32,6 +32,8 @@ data class NetworkSnapshot(val dataType: Int, val voiceType: Int) {
         }
 }
 
+fun needsFix(dataType: Int, voiceType: Int) = !is4g(dataType) && isOn2g(dataType, voiceType)
+
 fun isOn2g(dataType: Int, voiceType: Int) = dataType in TWO_G_TYPES || voiceType in TWO_G_TYPES
 
 fun is4g(type: Int) = type == TelephonyManager.NETWORK_TYPE_LTE || type == TelephonyManager.NETWORK_TYPE_NR

@@ -31,7 +31,7 @@ enum class FixResult(val shortLabel: String) {
     FAILED("Failed"),
 }
 
-enum class FixSource { MANUAL, CAR_DISCONNECT, STUCK_WHILE_DRIVING, FELL_BACK }
+enum class FixSource { MANUAL, CAR_DISCONNECT, STUCK_ON_2G, FELL_BACK }
 
 data class FixOutcome(val result: FixResult, val message: String)
 
@@ -73,7 +73,7 @@ class FixRunner(
                 .getOrElse { FixOutcome(FixResult.FAILED, "Fix failed: ${it.message}") }
             wakeLock.release()
             if (shouldNotify(source, outcome.result)) {
-                Notifications.showFixResult(context, notificationText(source, outcome.message))
+                Notifications.showFixResult(context, notificationText(source, outcome.message), automatic = source != FixSource.MANUAL)
             }
             mutableState.value = FixState.Done(outcome, System.currentTimeMillis(), source)
             busy.set(false)
