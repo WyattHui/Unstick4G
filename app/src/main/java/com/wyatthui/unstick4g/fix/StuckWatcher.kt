@@ -14,14 +14,15 @@ class StuckWatcher(
     private val enabled: () -> Boolean,
     private val fixRunning: () -> Boolean,
     private val blocked: () -> Boolean,
+    private val shizukuReady: () -> Boolean,
     private val now: () -> Long,
+    private val wakeAt: (Long) -> Unit,
     private val liveNetwork: () -> NetworkSnapshot?,
     private val fix: (FixSource) -> Unit,
     private val keepsDropping: () -> Unit,
     private val spellEnded: () -> Unit,
 ) {
     private var leftCarAt: Long? = null
-    private var lastNetwork: NetworkSnapshot? = null
     private var onFourG = false
     private var fourGSince: Long? = null
     private var spellClockFrom: Long? = null
@@ -32,7 +33,8 @@ class StuckWatcher(
     private var lastWorkingFixAt: Long? = null
     private var refixes = 0
     private var fastPhaseOver = false
-    private var pendingRefix: Job? = null
+    private var refixAt: Long? = null
+    private var alarmAt: Long? = null
 
     fun onCarConnectionChanged(connected: Boolean) {
         if (connected) onCarConnected() else leftCarAt = now()
@@ -42,13 +44,13 @@ class StuckWatcher(
     fun onFixFinished(source: FixSource, result: FixResult, at: Long) {
         lastFixFinishedAt = at
         lastWorkingFixAt = if (result == FixResult.BACK_ON_4G) at else null
+        if (result != FixResult.REFUSED) fourGSince = null
         if (source == FixSource.FELL_BACK && result != FixResult.BACK_ON_4G) fastPhaseOver = true
         liveNetwork()?.let { onNetworkChanged(it) }
     }
 
     fun onNetworkChanged(network: NetworkSnapshot) {
         endSpellIf4gHeld()
-        lastNetwork = network
         when {
             is4g(network.dataType) -> onBackOn4g()
             fixRunning() -> Unit
@@ -58,7 +60,15 @@ class StuckWatcher(
         check()
     }
 
-    fun onParked() = startFresh()
+    fun onParked() {
+        startFresh()
+        check()
+    }
+
+    fun onAlarm() {
+        alarmAt = null
+        check()
+    }
 
     private fun onCarConnected() {
         val awayMs = leftCarAt?.let { now() - it } ?: Long.MAX_VALUE
@@ -69,7 +79,7 @@ class StuckWatcher(
     private fun onBackOn4g() {
         onFourG = true
         if (fourGSince == null) fourGSince = now()
-        pendingRefix?.cancel()
+        refixAt = null
     }
 
     private fun onOn2g() {
@@ -84,7 +94,7 @@ class StuckWatcher(
         restartClock()
         ticker = scope.launch {
             while (spellClockFrom != null) {
-                delay((nextTryAt - now()).coerceIn(0, TICK_MS))
+                delay((nextWakeAt() - now()).coerceIn(0, TICK_MS))
                 check()
             }
         }
@@ -99,15 +109,11 @@ class StuckWatcher(
             keepsDropping()
             return
         }
-        val wait = REFIX_WAITS_MS[refixes++]
-        pendingRefix = scope.launch {
-            delay(wait)
-            if (enabled() && isOn2gNow() && !blocked()) fix(FixSource.FELL_BACK)
-        }
+        refixAt = now() + REFIX_WAITS_MS[refixes++]
     }
 
     private fun startFresh() {
-        pendingRefix?.cancel()
+        refixAt = null
         refixes = 0
         fastPhaseOver = false
         if (spellClockFrom != null) restartClock()
@@ -115,13 +121,20 @@ class StuckWatcher(
 
     private fun check() {
         endSpellIf4gHeld()
+        if (refixAt?.let { now() >= it } == true) refixNow()
         if (spellClockFrom != null && now() >= nextTryAt) tryNow()
+        updateAlarm()
+    }
+
+    private fun refixNow() {
+        refixAt = null
+        if (enabled() && isOn2gNow() && !blocked()) fix(FixSource.FELL_BACK)
     }
 
     private fun tryNow() {
         when {
             fixJustRan() -> nextSlot()
-            pendingRefix?.isActive == true || !enabled() || blocked() || !isOn2gNow() -> nextTryAt = now() + RETRY_MS
+            refixAt != null || !enabled() || blocked() || !isOn2gNow() -> nextTryAt = now() + RETRY_MS
             else -> {
                 fix(FixSource.STUCK_ON_2G)
                 nextSlot()
@@ -135,6 +148,13 @@ class StuckWatcher(
         val from = spellClockFrom ?: return
         do slot++ while (from + slotOffsetMs(slot) <= now())
         nextTryAt = from + slotOffsetMs(slot)
+    }
+
+    private fun updateAlarm() {
+        val at = nextWakeAt()
+        if (spellClockFrom == null || at == alarmAt || !enabled() || !shizukuReady() || !isOn2gNow()) return
+        alarmAt = at
+        wakeAt(at)
     }
 
     private fun endSpellIf4gHeld() {
@@ -156,7 +176,9 @@ class StuckWatcher(
     private fun slotOffsetMs(slot: Int) =
         SLOTS_MS.getOrElse(slot) { SLOTS_MS.last() + (slot - SLOTS_MS.lastIndex) * LATE_TRY_GAP_MS }
 
-    private fun isOn2gNow() = lastNetwork?.let { needsFix(it.dataType, it.voiceType) } == true
+    private fun nextWakeAt() = refixAt?.let { minOf(it, nextTryAt) } ?: nextTryAt
+
+    private fun isOn2gNow() = liveNetwork()?.let { needsFix(it.dataType, it.voiceType) } == true
 
     private companion object {
         const val MINUTE_MS = 60_000L

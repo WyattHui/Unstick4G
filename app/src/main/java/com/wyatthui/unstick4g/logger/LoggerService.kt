@@ -2,7 +2,9 @@ package com.wyatthui.unstick4g.logger
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.AlarmManager
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -13,6 +15,7 @@ import android.content.pm.ServiceInfo
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.os.Build
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
@@ -74,7 +77,9 @@ class LoggerService : Service() {
         { app.settings.autoFix },
         { app.fixRunner.state.value is FixState.Working },
         { autoFixBlocked() },
+        { shizukuReady() },
         { System.currentTimeMillis() },
+        { setTryAlarm(it) },
         { currentNetwork() },
         { app.fixRunner.start(it) },
         { Notifications.showKeepsDropping(this) },
@@ -110,6 +115,17 @@ class LoggerService : Service() {
         }
     }
 
+    private val tryAlarmReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            recordNetworkIfChanged()
+            stuckWatcher.onAlarm()
+        }
+    }
+
+    private val tryAlarm by lazy {
+        PendingIntent.getBroadcast(this, 0, Intent(ACTION_TRY_ALARM).setPackage(packageName), PendingIntent.FLAG_IMMUTABLE)
+    }
+
     override fun onCreate() {
         super.onCreate()
         ServiceCompat.startForeground(
@@ -127,6 +143,12 @@ class LoggerService : Service() {
             this,
             locationModeReceiver,
             IntentFilter(LocationManager.MODE_CHANGED_ACTION),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        ContextCompat.registerReceiver(
+            this,
+            tryAlarmReceiver,
+            IntentFilter(ACTION_TRY_ALARM),
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
         scope.launch { driveLock.withLock { dao.endOpenDrives() } }
@@ -155,6 +177,8 @@ class LoggerService : Service() {
         telephony.listen(phoneStateListener, PhoneStateListener.LISTEN_NONE)
         locationManager.removeUpdates(locationListener)
         unregisterReceiver(locationModeReceiver)
+        unregisterReceiver(tryAlarmReceiver)
+        getSystemService(AlarmManager::class.java).cancel(tryAlarm)
         carTracker.stop()
         scope.cancel()
         mutableStatus.value = LoggerStatus()
@@ -307,7 +331,13 @@ class LoggerService : Service() {
         }
     }
 
-    private fun autoFixBlocked() = onCall() || ShizukuState.status.value != ShizukuStatus.READY
+    private fun setTryAlarm(at: Long) {
+        val alarmManager = getSystemService(AlarmManager::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) return
+        alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, tryAlarm)
+    }
+
+    private fun autoFixBlocked() = onCall() || !shizukuReady()
 
     @Suppress("DEPRECATION")
     @SuppressLint("MissingPermission")
@@ -321,11 +351,14 @@ class LoggerService : Service() {
         null
     }
 
+    private fun shizukuReady() = ShizukuState.status.value == ShizukuStatus.READY
+
     private fun hasPermission(permission: String) =
         checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
 
     companion object {
         private const val EXTRA_FROM_BOOT = "from_boot"
+        private const val ACTION_TRY_ALARM = "com.wyatthui.unstick4g.TRY_ALARM"
         private const val SAMPLE_INTERVAL_MS = 30_000L
         private const val POLL_INTERVAL_MS = 60_000L
         private val PURGE_INTERVAL_MS = TimeUnit.DAYS.toMillis(1)

@@ -28,10 +28,12 @@ class StuckWatcherTest {
     private var enabled = true
     private var fixRunning = false
     private var onCall = false
+    private var shizukuOff = false
     private var slept = 0L
     private var live: NetworkSnapshot? = null
     private val fixes = mutableListOf<FixSource>()
     private val fixTimes = mutableListOf<Long>()
+    private val alarms = mutableListOf<Long>()
     private var keepsDroppingAlerts = 0
     private var alertsCleared = 0
 
@@ -51,7 +53,7 @@ class StuckWatcherTest {
         val watcher = stuckOn(EDGE)
 
         advanceTimeBy(MINUTE)
-        watcher.onNetworkChanged(LTE)
+        watcher.report(LTE)
         advanceTimeBy(10 * MINUTE)
 
         assertEquals(emptyList<FixSource>(), fixes)
@@ -75,7 +77,7 @@ class StuckWatcherTest {
         fixWorks(watcher)
 
         advanceTimeBy(2 * MINUTE + 30 * SECOND)
-        watcher.onNetworkChanged(EDGE)
+        watcher.report(EDGE)
         advanceTimeBy(30 * SECOND)
 
         // If brief 4G reset the schedule, a place where 4G comes and goes would get a Fix every few minutes forever.
@@ -89,10 +91,39 @@ class StuckWatcherTest {
         fixWorks(watcher)
 
         advanceTimeBy(7 * MINUTE)
-        watcher.onNetworkChanged(EDGE)
+        watcher.report(EDGE)
         advanceTimeBy(2 * MINUTE + SECOND)
 
         assertEquals(listOf(2 * MINUTE, 11 * MINUTE + SECOND), fixTimes)
+    }
+
+    @Test
+    fun `a Fix restarts the 5-minute hold, even when Android never reported the drop`() = runTest {
+        val watcher = stuckOn(EDGE)
+        advanceTimeBy(MINUTE)
+        watcher.report(LTE)
+        live = EDGE
+
+        advanceTimeBy(MINUTE + SECOND)
+        fixWorks(watcher)
+        advanceTimeBy(4 * MINUTE + 30 * SECOND)
+
+        // The Fix cut 4G, so counting the hold from before it would end the spell and reset the re-fixes too early.
+        assertEquals(0, alertsCleared)
+    }
+
+    @Test
+    fun `a refused Fix doesn't restart the 5-minute hold`() = runTest {
+        val watcher = stuckOn(EDGE)
+        advanceTimeBy(MINUTE)
+        watcher.report(LTE)
+
+        advanceTimeBy(4 * MINUTE)
+        watcher.onFixFinished(FixSource.MANUAL, FixResult.REFUSED, currentTime + slept)
+        advanceTimeBy(MINUTE + SECOND)
+
+        // A refused Fix never touched the network, so 4G held all along; a restart would keep the spell's alarms going.
+        assertEquals(1, alertsCleared)
     }
 
     @Test
@@ -100,7 +131,7 @@ class StuckWatcherTest {
         val watcher = stuckOn(EDGE)
         advanceTimeBy(2 * MINUTE + SECOND)
         fixFails(watcher)
-        watcher.onNetworkChanged(LTE)
+        watcher.report(LTE)
 
         advanceTimeBy(4 * MINUTE)
         assertEquals(0, alertsCleared)
@@ -117,11 +148,25 @@ class StuckWatcherTest {
         fixWorks(watcher)
 
         advanceTimeBy(4 * MINUTE)
-        watcher.onNetworkChanged(EDGE)
+        watcher.report(EDGE)
         advanceTimeBy(MINUTE)
 
         // Late in a spell the next slot is an hour away, so a 10-second flicker of 4G must not use up the try.
         assertEquals(listOf(2 * MINUTE, 7 * MINUTE), fixTimes)
+    }
+
+    @Test
+    fun `a try reads the network live, so 4G that came back a moment ago isn't cut`() = runTest {
+        stuckOn(EDGE)
+        live = LTE
+
+        advanceTimeBy(2 * MINUTE + SECOND)
+        // Android can report 4G a moment after the try fires; trusting the last event would cut 4G data for nothing.
+        assertEquals(emptyList<FixSource>(), fixes)
+
+        live = EDGE
+        advanceTimeBy(2 * MINUTE)
+        assertEquals(listOf(4 * MINUTE), fixTimes)
     }
 
     @Test
@@ -143,9 +188,9 @@ class StuckWatcherTest {
         val watcher = stuckOn(EDGE)
 
         advanceTimeBy(MINUTE)
-        watcher.onNetworkChanged(NONE)
+        watcher.report(NONE)
         advanceTimeBy(2 * MINUTE)
-        watcher.onNetworkChanged(EDGE)
+        watcher.report(EDGE)
         advanceTimeBy(MINUTE + SECOND)
 
         assertEquals(listOf(4 * MINUTE), fixTimes)
@@ -170,8 +215,8 @@ class StuckWatcherTest {
         val watcher = stuckOn(EDGE)
 
         advanceTimeBy(MINUTE)
-        watcher.onNetworkChanged(NONE)
-        watcher.onNetworkChanged(GPRS)
+        watcher.report(NONE)
+        watcher.report(GPRS)
         advanceTimeBy(MINUTE + SECOND)
 
         assertEquals(listOf(2 * MINUTE), fixTimes)
@@ -185,6 +230,7 @@ class StuckWatcherTest {
 
         fixRunning = true
         watcher.onParked()
+        assertEquals(currentTime + 2 * MINUTE, alarms.last())
         advanceTimeBy(20 * SECOND)
         fixFails(watcher, FixSource.CAR_DISCONNECT)
         advanceTimeBy(2 * MINUTE)
@@ -244,9 +290,90 @@ class StuckWatcherTest {
         advanceTimeBy(MINUTE + 10 * SECOND)
 
         slept = 40 * MINUTE
-        watcher.onNetworkChanged(GPRS)
+        watcher.report(GPRS)
 
         assertEquals(listOf(FixSource.STUCK_ON_2G), fixes)
+    }
+
+    @Test
+    fun `an alarm is set for every try time, so tries run on time while the phone sleeps`() = runTest {
+        val watcher = stuckOn(EDGE)
+        advanceTimeBy(2 * MINUTE + SECOND)
+        fixFails(watcher)
+
+        onCall = true
+        advanceTimeBy(3 * MINUTE)
+
+        // Android's timers stop while the phone sleeps, so without an alarm a try can run half an hour late.
+        assertEquals(listOf(2 * MINUTE, 5 * MINUTE, 7 * MINUTE), alarms)
+    }
+
+    @Test
+    fun `an alarm that fires early is set again, so the try isn't lost`() = runTest {
+        val watcher = stuckOn(EDGE)
+        advanceTimeBy(MINUTE)
+
+        watcher.onAlarm()
+
+        // A clock correction can bring the alarm in before the try is due; with no new alarm the phone would sleep through it.
+        assertEquals(listOf(2 * MINUTE, 2 * MINUTE), alarms)
+    }
+
+    @Test
+    fun `the alarm runs a try the phone slept through`() = runTest {
+        val watcher = stuckOn(EDGE)
+        advanceTimeBy(MINUTE + 10 * SECOND)
+
+        slept = MINUTE
+        watcher.onAlarm()
+
+        assertEquals(listOf(FixSource.STUCK_ON_2G), fixes)
+    }
+
+    @Test
+    fun `no alarm while Shizuku is off, and the alarm comes back when it's started`() = runTest {
+        stuckOn(EDGE)
+        shizukuOff = true
+
+        advanceTimeBy(12 * MINUTE + SECOND)
+        // Shizuku needs you to start it, so waking the phone every 2 minutes meanwhile would only use battery.
+        assertEquals(listOf(2 * MINUTE), alarms)
+
+        shizukuOff = false
+        advanceTimeBy(2 * MINUTE)
+        assertEquals(listOf(14 * MINUTE), fixTimes)
+        assertEquals(listOf(2 * MINUTE, 14 * MINUTE, 15 * MINUTE), alarms)
+    }
+
+    @Test
+    fun `no alarm while there's no signal, and the alarm comes back with the signal`() = runTest {
+        val watcher = stuckOn(EDGE)
+        advanceTimeBy(MINUTE)
+        watcher.report(NONE)
+
+        advanceTimeBy(10 * MINUTE)
+        // Airplane mode at night would otherwise wake the phone every 2 minutes until morning.
+        assertEquals(listOf(2 * MINUTE), alarms)
+
+        watcher.report(EDGE)
+        assertEquals(listOf(2 * MINUTE, 12 * MINUTE), alarms)
+    }
+
+    @Test
+    fun `no alarm while back on 4G, and the alarm comes back with 2G`() = runTest {
+        val watcher = stuckOn(EDGE)
+        advanceTimeBy(MINUTE)
+        watcher.report(LTE)
+        advanceTimeBy(MINUTE + SECOND)
+        watcher.report(NONE)
+        watcher.report(LTE)
+
+        advanceTimeBy(4 * MINUTE)
+        // 4G that keeps blipping never ends the spell, so 2-minute alarms on 4G would wake the phone for hours.
+        assertEquals(listOf(2 * MINUTE), alarms)
+
+        watcher.report(EDGE)
+        assertEquals(listOf(2 * MINUTE, 8 * MINUTE), alarms)
     }
 
     @Test
@@ -256,6 +383,8 @@ class StuckWatcherTest {
 
         advanceTimeBy(30 * MINUTE)
         assertEquals(0, fixes.size)
+        // Waking the phone for tries that can't run would only use battery.
+        assertEquals(emptyList<Long>(), alarms)
 
         enabled = true
         advanceTimeBy(2 * MINUTE + SECOND)
@@ -267,7 +396,7 @@ class StuckWatcherTest {
         val watcher = afterWorkingFix()
 
         advanceTimeBy(30 * SECOND)
-        watcher.onNetworkChanged(EDGE)
+        watcher.report(EDGE)
         runCurrent()
 
         assertEquals(listOf(FixSource.FELL_BACK), fixes)
@@ -278,7 +407,7 @@ class StuckWatcherTest {
         val watcher = afterWorkingFix()
 
         advanceTimeBy(3 * MINUTE)
-        watcher.onNetworkChanged(EDGE)
+        watcher.report(EDGE)
         runCurrent()
 
         assertEquals(emptyList<FixSource>(), refixes())
@@ -299,7 +428,7 @@ class StuckWatcherTest {
         assertEquals(FixSource.STUCK_ON_2G, fixes.last())
         fixWorks(watcher)
         advanceTimeBy(20 * SECOND)
-        watcher.onNetworkChanged(EDGE)
+        watcher.report(EDGE)
         advanceTimeBy(61 * SECOND)
 
         // Re-fixing forever where 4G can't hold would cut data every minute; the slow tries take over instead.
@@ -308,16 +437,48 @@ class StuckWatcherTest {
     }
 
     @Test
+    fun `a waiting re-fix sets an alarm and runs on time while the phone sleeps`() = runTest {
+        val watcher = afterWorkingFix()
+        advanceTimeBy(20 * SECOND)
+        watcher.report(EDGE)
+        runCurrent()
+        fixWorks(watcher)
+
+        advanceTimeBy(20 * SECOND)
+        watcher.report(EDGE)
+        val refixDue = currentTime + 30 * SECOND
+        assertEquals(refixDue, alarms.last())
+
+        slept = 30 * SECOND
+        watcher.onAlarm()
+
+        // A re-fix stuck waiting while the phone sleeps would also hold back every slow try until the screen comes on.
+        assertEquals(listOf(FixSource.FELL_BACK, FixSource.FELL_BACK), refixes())
+        // There is one alarm, so the 2-minute slow try must get it back or it would run late.
+        assertEquals(2 * MINUTE, alarms.last())
+    }
+
+    @Test
+    fun `a re-fix that runs straight away sets no throwaway alarm`() = runTest {
+        val watcher = afterWorkingFix()
+        advanceTimeBy(20 * SECOND)
+        watcher.report(EDGE)
+
+        // An alarm due at once would wake the phone for nothing, since the re-fix already ran.
+        assertEquals(listOf(2 * MINUTE), alarms)
+    }
+
+    @Test
     fun `a slow try that falls while a re-fix is waiting doesn't add a second Fix`() = runTest {
         val watcher = afterWorkingFix()
         advanceTimeBy(20 * SECOND)
-        watcher.onNetworkChanged(EDGE)
+        watcher.report(EDGE)
         runCurrent()
         advanceTimeBy(SECOND)
         fixWorks(watcher)
 
         advanceTimeBy(79 * SECOND)
-        watcher.onNetworkChanged(EDGE)
+        watcher.report(EDGE)
         advanceTimeBy(31 * SECOND)
 
         // The 2-minute try falls inside the 30-second re-fix wait; both firing would cut data twice.
@@ -328,14 +489,14 @@ class StuckWatcherTest {
     fun `a re-fix that doesn't work ends the fast phase, with no keeps-dropping alert`() = runTest {
         val watcher = afterWorkingFix()
         advanceTimeBy(20 * SECOND)
-        watcher.onNetworkChanged(EDGE)
+        watcher.report(EDGE)
         runCurrent()
         fixFails(watcher)
 
         advanceTimeBy(MINUTE + 41 * SECOND)
         fixWorks(watcher)
         advanceTimeBy(20 * SECOND)
-        watcher.onNetworkChanged(EDGE)
+        watcher.report(EDGE)
         advanceTimeBy(61 * SECOND)
 
         // Re-fixes resuming after the slow try would bring a second burst after a quiet stretch.
@@ -348,14 +509,14 @@ class StuckWatcherTest {
     fun `4G coming back by itself cancels a waiting re-fix`() = runTest {
         val watcher = afterWorkingFix()
         advanceTimeBy(20 * SECOND)
-        watcher.onNetworkChanged(EDGE)
+        watcher.report(EDGE)
         runCurrent()
         fixWorks(watcher)
 
         advanceTimeBy(20 * SECOND)
-        watcher.onNetworkChanged(EDGE)
+        watcher.report(EDGE)
         advanceTimeBy(10 * SECOND)
-        watcher.onNetworkChanged(LTE)
+        watcher.report(LTE)
         advanceTimeBy(MINUTE)
 
         assertEquals(1, refixes().size)
@@ -365,14 +526,14 @@ class StuckWatcherTest {
     fun `a waiting re-fix is skipped if the phone has left 2G`() = runTest {
         val watcher = afterWorkingFix()
         advanceTimeBy(20 * SECOND)
-        watcher.onNetworkChanged(EDGE)
+        watcher.report(EDGE)
         runCurrent()
         fixWorks(watcher)
 
         advanceTimeBy(20 * SECOND)
-        watcher.onNetworkChanged(EDGE)
+        watcher.report(EDGE)
         advanceTimeBy(10 * SECOND)
-        watcher.onNetworkChanged(NONE)
+        watcher.report(NONE)
         advanceTimeBy(30 * SECOND)
 
         assertEquals(1, refixes().size)
@@ -383,7 +544,7 @@ class StuckWatcherTest {
         val watcher = afterWorkingFix()
 
         onCall = true
-        watcher.onNetworkChanged(EDGE)
+        watcher.report(EDGE)
         advanceTimeBy(MINUTE)
 
         assertEquals(emptyList<FixSource>(), refixes())
@@ -394,8 +555,8 @@ class StuckWatcherTest {
         val watcher = afterWorkingFix()
 
         fixRunning = true
-        watcher.onNetworkChanged(NONE)
-        watcher.onNetworkChanged(EDGE)
+        watcher.report(NONE)
+        watcher.report(EDGE)
         advanceTimeBy(MINUTE)
 
         assertEquals(emptyList<FixSource>(), refixes())
@@ -403,10 +564,10 @@ class StuckWatcherTest {
 
     @Test
     fun `a Fix tapped on 4G that leaves the phone on 2G starts the stuck tries`() = runTest {
-        val watcher = watcher().apply { onNetworkChanged(LTE) }
+        val watcher = watcher().apply { report(LTE) }
 
         fixRunning = true
-        watcher.onNetworkChanged(EDGE)
+        watcher.report(EDGE)
         live = EDGE
         fixFails(watcher, FixSource.MANUAL)
         advanceTimeBy(2 * MINUTE + SECOND)
@@ -420,8 +581,8 @@ class StuckWatcherTest {
         val watcher = stuckOn(EDGE)
         advanceTimeBy(2 * MINUTE + SECOND)
 
-        watcher.onNetworkChanged(LTE)
-        watcher.onNetworkChanged(EDGE)
+        watcher.report(LTE)
+        watcher.report(EDGE)
         live = EDGE
         fixRunning = false
         watcher.onFixFinished(FixSource.STUCK_ON_2G, FixResult.BACK_ON_4G, currentTime + slept)
@@ -432,10 +593,10 @@ class StuckWatcherTest {
 
     @Test
     fun `a Fix that saw 4G before Android reported it is not re-fixed`() = runTest {
-        val watcher = watcher().apply { onNetworkChanged(LTE) }
+        val watcher = watcher().apply { report(LTE) }
 
         fixRunning = true
-        watcher.onNetworkChanged(EDGE)
+        watcher.report(EDGE)
         live = LTE
         fixRunning = false
         watcher.onFixFinished(FixSource.MANUAL, FixResult.BACK_ON_4G, currentTime + slept)
@@ -450,7 +611,7 @@ class StuckWatcherTest {
         val watcher = stuckOn(EDGE)
 
         advanceTimeBy(MINUTE)
-        watcher.onNetworkChanged(LTE_DATA_GSM_VOICE)
+        watcher.report(LTE_DATA_GSM_VOICE)
         advanceTimeBy(MINUTE + SECOND)
 
         // Data is what you notice; flipping a phone that already has 4G data would cut it for nothing.
@@ -462,13 +623,13 @@ class StuckWatcherTest {
         val watcher = afterWorkingFix()
         dropBackUntilHandover(watcher)
 
-        watcher.onNetworkChanged(LTE)
+        watcher.report(LTE)
         advanceTimeBy(6 * MINUTE)
-        watcher.onNetworkChanged(EDGE)
+        watcher.report(EDGE)
         advanceTimeBy(2 * MINUTE + SECOND)
         fixWorks(watcher)
         advanceTimeBy(20 * SECOND)
-        watcher.onNetworkChanged(EDGE)
+        watcher.report(EDGE)
         runCurrent()
 
         assertEquals(4, refixes().size)
@@ -478,12 +639,12 @@ class StuckWatcherTest {
     fun `parking cancels a waiting re-fix`() = runTest {
         val watcher = afterWorkingFix()
         advanceTimeBy(20 * SECOND)
-        watcher.onNetworkChanged(EDGE)
+        watcher.report(EDGE)
         runCurrent()
         fixWorks(watcher)
 
         advanceTimeBy(20 * SECOND)
-        watcher.onNetworkChanged(EDGE)
+        watcher.report(EDGE)
         watcher.onParked()
         advanceTimeBy(31 * SECOND)
 
@@ -500,7 +661,7 @@ class StuckWatcherTest {
         advanceTimeBy(2 * MINUTE + SECOND)
         fixWorks(watcher)
         advanceTimeBy(20 * SECOND)
-        watcher.onNetworkChanged(EDGE)
+        watcher.report(EDGE)
         runCurrent()
 
         // A new place deserves the quick re-fixes again, even if the last place used them up.
@@ -513,7 +674,7 @@ class StuckWatcherTest {
         val watcher = afterWorkingFix()
 
         advanceTimeBy(30 * SECOND)
-        watcher.onNetworkChanged(EDGE)
+        watcher.report(EDGE)
         advanceTimeBy(10 * MINUTE)
 
         assertEquals(emptyList<FixSource>(), fixes)
@@ -521,11 +682,11 @@ class StuckWatcherTest {
 
     private fun refixes() = fixes.filter { it == FixSource.FELL_BACK }
 
-    private fun TestScope.stuckOn(network: NetworkSnapshot) = watcher().apply { onNetworkChanged(network) }
+    private fun TestScope.stuckOn(network: NetworkSnapshot) = watcher().apply { report(network) }
 
     private fun TestScope.afterWorkingFix() = watcher().apply {
-        onNetworkChanged(EDGE)
-        onNetworkChanged(LTE)
+        report(EDGE)
+        report(LTE)
         onFixFinished(FixSource.MANUAL, FixResult.BACK_ON_4G, currentTime + slept)
     }
 
@@ -540,9 +701,9 @@ class StuckWatcherTest {
         val waits = mutableListOf<Long>()
         repeat(4) {
             advanceTimeBy(20 * SECOND)
-            watcher.onNetworkChanged(EDGE)
-            val droppedAt = currentTime
             val fixesBefore = fixes.size
+            watcher.report(EDGE)
+            val droppedAt = currentTime
             advanceTimeBy(61 * SECOND)
             if (fixes.size > fixesBefore) {
                 waits += fixTimes.last() - droppedAt
@@ -556,8 +717,10 @@ class StuckWatcherTest {
         backgroundScope,
         { enabled },
         { fixRunning },
-        { onCall },
+        { onCall || shizukuOff },
+        { !shizukuOff },
         { currentTime + slept },
+        { alarms += it },
         { live },
         {
             fixes += it
@@ -569,7 +732,7 @@ class StuckWatcherTest {
     )
 
     private fun TestScope.fixWorks(watcher: StuckWatcher, source: FixSource = fixes.last()) {
-        watcher.onNetworkChanged(LTE)
+        watcher.report(LTE)
         fixRunning = false
         watcher.onFixFinished(source, FixResult.BACK_ON_4G, currentTime + slept)
     }
@@ -577,5 +740,10 @@ class StuckWatcherTest {
     private fun TestScope.fixFails(watcher: StuckWatcher, source: FixSource = fixes.last()) {
         fixRunning = false
         watcher.onFixFinished(source, FixResult.STILL_ON_2G, currentTime + slept)
+    }
+
+    private fun StuckWatcher.report(network: NetworkSnapshot) {
+        live = network
+        onNetworkChanged(network)
     }
 }

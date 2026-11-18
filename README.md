@@ -21,9 +21,9 @@ Unstick4G does that step for me. It also records data, so a later version can do
 - **Fix:** a Quick Settings tile and an in-app button. The Fix sets the preferred network mode to 2G only for a few seconds, then restores the exact mode it found. If the phone doesn't allow that, it turns flight mode on and off instead. Then it watches the network for up to 30 seconds and tells you "Back on 4G ✓" or "Still on 2G — probably no usable 4G here."
 - **Auto-fix when you park:** after the phone disconnects from the car's Bluetooth, it checks every 10 seconds for up to a minute, and runs the Fix by itself at the first check that finds it on 2G. Reconnecting cancels it, so a short Bluetooth drop mid-drive does nothing. Parking also restarts the "Auto-fix when stuck" clock below, because a new place may have 4G. In my logs, the long stuck spells started at the end of a drive. You only get a notification if it didn't work. The "Fix 2G automatically" switch in Settings turns off every automatic Fix.
 - **Auto-fix when stuck:** whenever the phone drops to 2G (at home, walking or driving), the Fix runs by itself, at two speeds.
-  - Slow: if it isn't back on 4G within 2 minutes, then again at 5, 10, 15, 30 and 60 minutes, then every hour. A try counts as done if a Fix has just run. On 4G, during a call, with no signal or while Shizuku is off, it checks again 2 minutes later.
+  - Slow: if it isn't back on 4G within 2 minutes, then again at 5, 10, 15, 30 and 60 minutes, then every hour. A try counts as done if a Fix has just run. On 4G, during a call, with no signal or while Shizuku is off, it checks again 2 minutes later; if the phone is asleep with no alarm set (see below), it checks when the phone wakes.
   - Fast: if 4G falls back to 2G within 2 minutes of a Fix that worked, it fixes again after 0, 30 and then 60 seconds. If 4G still won't hold, it tells you "4G keeps dropping here — trying less often" and leaves the rest to the slow tries. A re-fix that doesn't bring 4G back also ends the fast phase, so it runs at most once per spell.
-  - Only 4G that holds for 5 minutes ends the spell and resets both. Parking, or getting back in the car after more than 10 minutes, restarts the clock. The checks can run late while the phone sleeps, and catch up soon after it wakes.
+  - Only 4G that holds for 5 minutes ends the spell and resets both. Parking, or getting back in the car after more than 10 minutes, restarts the clock. An alarm wakes the phone (not the screen) for each try and re-fix, so they run on time while it sleeps. While Shizuku or the switch is off, or the phone isn't on 2G (back on 4G, or no signal), it sets no new alarm, because no Fix could help. Each try reads the network live, so 4G that came back a moment ago isn't cut.
   - A failed Fix alerts you. While that alert is still showing, later ones update it without a sound; once you clear it, the next failure alerts you again. The alert clears itself once 4G has held for 5 minutes, so the next spell alerts you afresh. No automatic Fix runs during a phone call, or while Shizuku is off (the Fix tile then shows "Needs Shizuku").
 - **Safety:** the original mode is saved before the switch, and restored on the next start if the app dies halfway. The Fix does nothing during a call, or when the network mode isn't the normal auto mode.
 - **Logger:** a foreground service, started at boot, records every network-type change. It never changes anything.
@@ -41,6 +41,8 @@ Both methods sit behind one `NetworkKicker` interface, and the Fix method settin
 Download `unstick4g-debug-apk` from the latest successful [CI run](https://github.com/WyattHui/Unstick4G/actions/workflows/ci.yml) and sideload it.
 
 Local and CI builds are signed with the same debug key (`app/debug.keystore`, committed on purpose). So each new build installs over the last one and keeps the logs.
+
+Then turn off battery optimisation for Unstick4G (Settings > Apps > Unstick4G > Battery), or run `adb shell dumpsys deviceidle whitelist +com.wyatthui.unstick4g`. Without it, Android limits how often the app's alarms can wake a sleeping phone.
 
 ## Shizuku setup
 
@@ -63,6 +65,7 @@ Shizuku stops when the phone restarts, and it can occasionally stop on its own. 
 | Location, "Allow all the time" (`ACCESS_FINE_LOCATION`, `ACCESS_BACKGROUND_LOCATION`) | GPS samples and LTE cell details while driving. The logger starts at boot with no screen open, so Android 11 counts this as background use. |
 | Bluetooth (`BLUETOOTH`) | List paired devices, and see when the car connects or disconnects. |
 | Run at startup (`RECEIVE_BOOT_COMPLETED`) | Start the logger after a restart. |
+| Exact alarms (`SCHEDULE_EXACT_ALARM`) | Wake the phone at each automatic try while stuck on 2G. Android 11 allows this without asking; the permission is for newer versions. |
 | Keep awake (`WAKE_LOCK`) | Keep the phone awake for the few seconds a Fix takes, so an automatic Fix with the screen off still switches back on time. |
 | Foreground service | Keep the logger running, with a low-priority notification. |
 | Shizuku | Change the network mode or flight mode as the shell user. |
@@ -90,7 +93,7 @@ Timestamps are UTC, in ISO 8601. `lte_cells` lists each LTE cell the phone can s
 ## Development
 
 - Kotlin, Jetpack Compose and Room. minSdk 30, one module.
-- Built and tested for Android 11 only. Newer Android versions would need extra permission handling (Bluetooth, notifications, the logger's location service, the tile).
+- Built and tested for Android 11 only. Newer Android versions would need extra permission handling (Bluetooth, notifications, exact alarms, the logger's location service, the tile).
 - Needs JDK 17 and the Android SDK with platform 37.
 - `./gradlew assembleDebug testDebugUnitTest` builds the APK and runs the unit tests. CI runs the same on every push and pull request.
 - The logger uses `PhoneStateListener`, which is deprecated, because its replacement `TelephonyCallback` only arrived in Android 12.
